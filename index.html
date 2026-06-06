@@ -396,13 +396,93 @@
         color: #444;
         font-size: 14px;
       }
+
+      /* Schedule styles */
+      .schedule-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 20px;
+        background-color: var(--ps-row-odd);
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+      }
+      .schedule-table th, .schedule-table td {
+        border: 1px solid var(--ps-border);
+        padding: 15px;
+        text-align: center;
+        vertical-align: middle;
+      }
+      .schedule-table th {
+        background-color: var(--ps-header-bg);
+        color: var(--ps-header-text);
+        font-weight: 600;
+        font-size: 14px;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+      }
+      .schedule-time {
+        font-weight: bold;
+        color: #555;
+      }
+      .class-info {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        height: 100%;
+        padding: 5px 0;
+      }
+      .course-name {
+        font-weight: bold;
+        margin-bottom: 5px;
+        color: var(--ps-text);
+        font-size: 14px;
+      }
+      .teacher-room {
+        font-size: 12px;
+        color: #666;
+      }
+      .split-slot {
+        display: flex;
+        width: 100%;
+        height: 100%;
+      }
+      .split-half {
+        flex: 1;
+        padding: 5px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+      }
+      .split-half:first-child {
+        border-right: 1px dashed var(--ps-border);
+      }
+      .sem-label {
+        font-size: 11px;
+        text-transform: uppercase;
+        color: #999;
+        margin-bottom: 3px;
+        font-weight: bold;
+      }
+      .virtual-blocks {
+        margin-top: 20px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 15px;
+      }
+      .virtual-card {
+        background: #fff;
+        border: 1px solid var(--ps-border);
+        border-radius: 6px;
+        padding: 15px;
+        min-width: 250px;
+        flex: 1;
+      }
     </style>
   </head>
   <body>
     <div class="container">
       <div id="setup-section">
-        <h2>PowerSchool Calculator</h2>
-        <p style="color: #666; margin-bottom: 15px">
+        <h2 id="app-title">PowerSchool Calculator</h2>
+        <p id="directions" style="color: #666; margin-bottom: 15px">
           Copy and paste the PowerSchool "Class Score Detail" page below.
         </p>
 
@@ -478,13 +558,44 @@
           <tbody id="table-body"></tbody>
         </table>
       </div>
+      <div id="schedule-dashboard-section" style="display: none;">
+        <button onclick="resetApp()" class="back-btn">&larr; Back</button>
+        <h2>Your Schedule</h2>
+        <div id="schedule-container"></div>
+      </div>
     </div>
 
+
+    
+
+    <button id="mode-toggle-btn" class="primary-outline" style="position: fixed; bottom: 20px; right: 20px; z-index: 1000; box-shadow: 0 2px 10px rgba(0,0,0,0.1); background-color: #fff;" onclick="toggleAppMode()">Schedule Mode</button>
+
     <script>
+      let appMode = "calculator"; // 'calculator' or 'schedule'
+
+      function toggleAppMode() {
+        if (appMode === "calculator") {
+          appMode = "schedule";
+          document.getElementById("mode-toggle-btn").innerText = "Calculator Mode";
+          document.getElementById("app-title").innerText = "PowerSchool Schedule";
+          document.getElementById("raw-data").placeholder = "Paste schedule here...";
+          document.getElementById("directions").innerText = "Enter your schedule data here (Next Year Schedule section of PowerSchool).";
+        } else {
+          appMode = "calculator";
+          document.getElementById("mode-toggle-btn").innerText = "Schedule Mode";
+          document.getElementById("app-title").innerText = "PowerSchool Calculator";
+          document.getElementById("raw-data").placeholder = "Paste here...";
+          document.getElementById("directions").innerText =
+            "Copy and paste the PowerSchool \"Class Score Detail\" page below.";
+        }
+        resetApp();
+      }
+
       let appData = {
         metadata: { course: "", teacher: "", expression: "" },
         categories: {},
         assignments: [],
+        schedule: { classes: [] }
       };
 
       document
@@ -538,6 +649,11 @@
         const rawText = document.getElementById("raw-data").value;
         if (!rawText.trim()) {
           document.getElementById("loading-overlay").style.display = "none";
+          return;
+        }
+
+        if (appMode === "schedule") {
+          processScheduleData(rawText);
           return;
         }
 
@@ -983,6 +1099,7 @@
       function resetApp() {
         document.getElementById("setup-section").style.display = "block";
         document.getElementById("dashboard-section").style.display = "none";
+        document.getElementById("schedule-dashboard-section").style.display = "none";
         document.getElementById("raw-data").value = "";
         hideError();
       }
@@ -990,6 +1107,209 @@
       function generateId() {
         return Math.random().toString(36).substr(2, 9);
       }
+      function processScheduleData(rawText) {
+        appData.schedule = { classes: [] };
+
+        // Split into non-empty lines
+        const rawLines = rawText.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+
+        // Find header row
+        let headerIndex = -1;
+        for (let i = 0; i < rawLines.length; i++) {
+          const s = rawLines[i];
+          if (s.includes("Expression") && s.includes("Course Number") && s.includes("Term")) {
+            headerIndex = i;
+            break;
+          }
+        }
+
+        if (headerIndex === -1) {
+          // fallback: try to find the start of the schedule table
+          headerIndex = rawLines.findIndex(l => /^\d+\(A\)/.test(l) || /^\d+\s+\(A\)/.test(l));
+          if (headerIndex !== -1) headerIndex = headerIndex - 1; // include header just above
+        }
+
+        // Build logical records: join wrapped lines (lines that don't start with an expression belong to previous row)
+        const records = [];
+        for (let i = headerIndex + 1; i < rawLines.length; i++) {
+          const line = rawLines[i];
+          if (/^\d+\s*\(?A\)?/i.test(line)) {
+            records.push(line);
+          } else if (records.length > 0) {
+            // append wrapped content to previous record
+            records[records.length - 1] += " " + line;
+          }
+        }
+
+        // Parse each record using tabs or two+ spaces as separators
+        records.forEach(rec => {
+          const parts = rec.split(/\t|\s{2,}/).map(p => p.trim()).filter(p => p.length > 0);
+          if (parts.length < 2) return;
+
+          const exprRaw = parts[0];
+          const term = parts[1] || "";
+
+          // Heuristic for remaining fields: course number at parts[2], then course name, teacher, room
+          const courseNumber = parts.length > 2 ? parts[2] : "";
+          const rest = parts.slice(3);
+
+          let cName = "";
+          let teacher = "";
+          let room = "";
+
+          if (rest.length === 0) {
+            cName = "";
+          } else if (rest.length === 1) {
+            cName = rest[0];
+          } else if (rest.length === 2) {
+            cName = rest[0];
+            teacher = rest[1];
+          } else {
+            // assume last token is room, second-last is teacher, the rest is course name
+            room = rest[rest.length - 1];
+            teacher = rest[rest.length - 2];
+            cName = rest.slice(0, rest.length - 2).join(" ");
+          }
+
+          const match = exprRaw.match(/(\d+)\s*\(?A\)?/i);
+          if (match) {
+            const expr = match[1] + "A";
+            appData.schedule.classes.push({ expr: expr, term: term, name: cName || courseNumber, teacher: teacher, room: room });
+          }
+        });
+
+        if (appData.schedule.classes.length === 0) {
+          document.getElementById("loading-overlay").style.display = "none";
+          return showError("Could not detect any schedule data. Make sure you copied the schedule table including the header row.");
+        }
+
+        document.getElementById("loading-overlay").style.display = "none";
+        document.getElementById("setup-section").style.display = "none";
+
+        renderSchedule();
+      }
+
+      function renderSchedule() {
+        document.getElementById("schedule-dashboard-section").style.display = "block";
+        if (document.getElementById("dashboard-section")) document.getElementById("dashboard-section").style.display = "none";
+
+        const scheduleLayout = [
+          { name: "Block 1", time: "7:55 - 9:14", red: "1A", silver: "2A" },
+          { name: "Block 2", time: "9:19 - 10:38", red: "3A", silver: "4A" },
+          { name: "Advisory", time: "10:43 - 11:13", red: "9A", silver: "9A" },
+          { name: "Block 3", time: "11:18 - 1:11", red: "5A", silver: "6A" },
+          { name: "Block 4", time: "1:16 - 2:35", red: "7A", silver: "8A" }
+        ];
+
+        const getClasses = (expr) => {
+          return appData.schedule.classes.filter(c => c.expr === expr && c.name !== "FireDrill");
+        };
+
+        const formatTeacherRoom = (entry) => {
+          if (!entry) return "";
+          return `${entry.teacher}${entry.room ? " - " + entry.room : ""}`;
+        };
+
+        const sameEntry = (left, right) => {
+          if (!left || !right) return false;
+          return (
+            left.name === right.name &&
+            left.teacher === right.teacher &&
+            left.room === right.room
+          );
+        };
+
+        const renderSlot = (expr) => {
+          const classes = getClasses(expr);
+          if (classes.length === 0) return `<div class="class-info"><div class="course-name" style="color: #999; font-weight: normal;">Free / Not Scheduled</div></div>`;
+
+          let fullYearClass = classes.find(c => c.term.includes("26-27") || c.term.includes("24-25") || c.term.includes("25-26") || (!c.term.includes("S1") && !c.term.includes("S2")));
+
+          if (fullYearClass) {
+            return `<div class="class-info">
+              <div class="course-name">${fullYearClass.name}</div>
+              <div class="teacher-room">${formatTeacherRoom(fullYearClass)}</div>
+            </div>`;
+          }
+
+          let s1 = classes.find(c => c.term === "S1");
+          let s2 = classes.find(c => c.term === "S2");
+
+          if (sameEntry(s1, s2)) {
+            return `<div class="class-info">
+              <div class="course-name">${s1.name}</div>
+              <div class="teacher-room">${formatTeacherRoom(s1)}</div>
+            </div>`;
+          }
+
+          let html = `<div class="split-slot">`;
+          if (s1) {
+            html += `<div class="split-half">
+              <div class="sem-label">S1</div>
+              <div class="course-name">${s1.name}</div>
+              <div class="teacher-room">${formatTeacherRoom(s1)}</div>
+            </div>`;
+          } else {
+             html += `<div class="split-half"></div>`;
+          }
+          if (s2) {
+            html += `<div class="split-half">
+              <div class="sem-label">S2</div>
+              <div class="course-name">${s2.name}</div>
+              <div class="teacher-room">${formatTeacherRoom(s2)}</div>
+            </div>`;
+          } else {
+             html += `<div class="split-half"></div>`;
+          }
+          html += `</div>`;
+          return html;
+        };
+
+        let html = `
+          <table class="schedule-table">
+            <thead>
+              <tr>
+                <th width="20%">Block</th>
+                <th width="40%">Red Day</th>
+                <th width="40%">Silver Day</th>
+              </tr>
+            </thead>
+            <tbody>
+        `;
+
+        scheduleLayout.forEach(row => {
+          const isAdvisory = row.name === "Advisory";
+          html += `
+            <tr>
+              <td>
+                <div class="schedule-time" style="margin-bottom: 5px;">${row.name}</div>
+                <div class="schedule-time" style="font-weight: normal; font-size: 13px;">${row.time}</div>
+              </td>
+              ${isAdvisory ? `<td colspan="2">${renderSlot(row.red)}</td>` : `<td>${renderSlot(row.red)}</td><td>${renderSlot(row.silver)}</td>`}
+            </tr>
+          `;
+        });
+
+        html += `</tbody></table>`;
+
+        const virtuals = getClasses("10A");
+        if (virtuals.length > 0) {
+          html += `<h3 style="margin-top: 30px;">Virtual Blocks</h3><div class="virtual-blocks">`;
+          virtuals.forEach(v => {
+            html += `
+              <div class="virtual-card">
+                <div class="sem-label">${v.term}</div>
+                <div class="course-name" style="margin-bottom: 5px;">${v.name}</div>
+                <div class="teacher-room">${formatTeacherRoom(v)}</div>
+              </div>
+            `;
+          });
+          html += `</div>`;
+        }
+
+        document.getElementById("schedule-container").innerHTML = html;
+      }
+
     </script>
   </body>
 </html>
